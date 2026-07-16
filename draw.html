@@ -77,19 +77,59 @@
         ctx.strokeStyle = "black"
 
         for (const stroke of strokes) {
-          if (stroke.length < 2) continue
+          if (stroke.points.length < 2) continue
 
           ctx.beginPath()
 
           ctx.lineWidth = 2
 
-          ctx.moveTo(stroke[0].x, stroke[0].y)
+          ctx.moveTo(stroke.points[0].x, stroke.points[0].y)
 
-          for (let i = 1; i < stroke.length; i++) {
-            ctx.lineTo(stroke[i].x, stroke[i].y)
+          for (let i = 1; i < stroke.points.length; i++) {
+            ctx.lineTo(stroke.points[i].x, stroke.points[i].y)
+          }
+
+          if (stroke === currentStroke && penDown) {
+            const predictedPoint = getPredictedPoint(stroke)
+
+            if (predictedPoint) {
+              ctx.lineTo(predictedPoint.x, predictedPoint.y)
+            }
           }
 
           ctx.stroke()
+        }
+      }
+
+      function addStrokePoint(stroke, point, timeStamp) {
+        const previousPoint = stroke.points[stroke.points.length - 1]
+
+        stroke.points.push(point)
+
+        if (!previousPoint) return
+
+        const elapsed = Math.max(timeStamp - stroke.lastPointTime, 1)
+        const newVelocity = {
+          x: (point.x - previousPoint.x) / elapsed,
+          y: (point.y - previousPoint.y) / elapsed,
+        }
+
+        stroke.velocity = {
+          x: stroke.velocity.x * 0.8 + newVelocity.x * 0.2,
+          y: stroke.velocity.y * 0.8 + newVelocity.y * 0.2,
+        }
+
+        stroke.lastPointTime = timeStamp
+      }
+
+      function getPredictedPoint(stroke) {
+        if (stroke.points.length < 2) return null
+
+        const lastPoint = stroke.points[stroke.points.length - 1]
+
+        return {
+          x: lastPoint.x + stroke.velocity.x * 15,
+          y: lastPoint.y + stroke.velocity.y * 15,
         }
       }
 
@@ -101,11 +141,15 @@
 
           penPointer = e.pointerId
 
-          currentStroke = []
+          currentStroke = {
+            points: [],
+            velocity: { x: 0, y: 0 },
+            lastPointTime: e.timeStamp,
+          }
 
           strokes.push(currentStroke)
 
-          currentStroke.push(screenToWorld(e.clientX, e.clientY))
+          addStrokePoint(currentStroke, screenToWorld(e.clientX, e.clientY), e.timeStamp)
 
           canvas.setPointerCapture(e.pointerId)
         }
@@ -120,7 +164,7 @@
 
       canvas.addEventListener("pointermove", (e) => {
         if (e.pointerType === "pen" && penDown && e.pointerId === penPointer) {
-          currentStroke.push(screenToWorld(e.clientX, e.clientY))
+          addStrokePoint(currentStroke, screenToWorld(e.clientX, e.clientY), e.timeStamp)
 
           draw()
         }
