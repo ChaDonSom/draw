@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+
+    <style>
+      html,
+      body {
+        margin: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: #f5f5f5;
+      }
+
+      canvas {
+        display: block;
+        width: 100%;
+        height: 100%;
+        touch-action: none;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="canvas"></canvas>
+
+    <script>
+      const canvas = document.getElementById("canvas")
+      const ctx = canvas.getContext("2d")
+
+      const strokes = []
+
+      let camera = new DOMMatrix()
+
+      let penDown = false
+      let currentStroke = null
+      let penPointer = null
+
+      const touches = new Map()
+
+      function resize() {
+        const dpr = devicePixelRatio
+
+        canvas.width = canvas.clientWidth * dpr
+        canvas.height = canvas.clientHeight * dpr
+
+        draw()
+      }
+
+      addEventListener("resize", resize)
+
+      function screenToWorld(x, y) {
+        const rect = canvas.getBoundingClientRect()
+
+        const px = x - rect.left
+        const py = y - rect.top
+
+        const inv = camera.inverse()
+
+        const p = new DOMPoint(px, py).matrixTransform(inv)
+
+        return p
+      }
+
+      function draw() {
+        ctx.setTransform(1, 0, 0, 1, 0, 0)
+
+        ctx.clearRect(0, 0, canvas.width, canvas.height)
+
+        const dpr = devicePixelRatio
+
+        ctx.setTransform(camera.a * dpr, camera.b * dpr, camera.c * dpr, camera.d * dpr, camera.e * dpr, camera.f * dpr)
+
+        ctx.lineCap = "round"
+        ctx.lineJoin = "round"
+        ctx.strokeStyle = "black"
+
+        for (const stroke of strokes) {
+          if (stroke.length < 2) continue
+
+          ctx.beginPath()
+
+          ctx.lineWidth = 2
+
+          ctx.moveTo(stroke[0].x, stroke[0].y)
+
+          for (let i = 1; i < stroke.length; i++) {
+            ctx.lineTo(stroke[i].x, stroke[i].y)
+          }
+
+          ctx.stroke()
+        }
+      }
+
+      resize()
+
+      canvas.addEventListener("pointerdown", (e) => {
+        if (e.pointerType === "pen") {
+          penDown = true
+
+          penPointer = e.pointerId
+
+          currentStroke = []
+
+          strokes.push(currentStroke)
+
+          currentStroke.push(screenToWorld(e.clientX, e.clientY))
+
+          canvas.setPointerCapture(e.pointerId)
+        }
+
+        if (e.pointerType === "touch") {
+          touches.set(e.pointerId, {
+            x: e.clientX,
+            y: e.clientY,
+          })
+        }
+      })
+
+      canvas.addEventListener("pointermove", (e) => {
+        if (e.pointerType === "pen" && penDown && e.pointerId === penPointer) {
+          currentStroke.push(screenToWorld(e.clientX, e.clientY))
+
+          draw()
+        }
+
+        if (e.pointerType === "touch") {
+          if (!touches.has(e.pointerId)) return
+
+          touches.set(e.pointerId, {
+            x: e.clientX,
+            y: e.clientY,
+          })
+
+          gesture()
+        }
+      })
+
+      canvas.addEventListener("pointerup", (e) => {
+        if (e.pointerType === "pen") {
+          penDown = false
+          penPointer = null
+        }
+
+        touches.delete(e.pointerId)
+
+        lastCenter = null
+        lastDistance = null
+      })
+
+      canvas.addEventListener("pointercancel", (e) => {
+        touches.delete(e.pointerId)
+      })
+
+      let lastCenter = null
+      let lastDistance = null
+
+      function gesture() {
+        if (touches.size === 1) {
+          const p = [...touches.values()][0]
+
+          if (lastCenter) {
+            camera = camera.translate(p.x - lastCenter.x, p.y - lastCenter.y)
+
+            draw()
+          }
+
+          lastCenter = p
+        }
+
+        if (touches.size === 2) {
+          const pts = [...touches.values()]
+
+          const center = {
+            x: (pts[0].x + pts[1].x) / 2,
+            y: (pts[0].y + pts[1].y) / 2,
+          }
+
+          const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y)
+
+          if (lastDistance) {
+            const scale = dist / lastDistance
+
+            camera = camera.translate(center.x, center.y).scale(scale).translate(-center.x, -center.y)
+
+            draw()
+          }
+
+          lastCenter = center
+          lastDistance = dist
+        }
+      }
+    </script>
+  </body>
+</html>
