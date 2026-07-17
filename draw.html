@@ -34,12 +34,14 @@
       })
 
       const strokes = []
+      const supportsPointerRawUpdate = "onpointerrawupdate" in window
 
       let camera = new DOMMatrix()
 
       let penDown = false
       let currentStroke = null
       let penPointer = null
+      let drawQueued = false
 
       const touches = new Map()
 
@@ -49,7 +51,7 @@
         canvas.width = canvas.clientWidth * dpr
         canvas.height = canvas.clientHeight * dpr
 
-        draw()
+        scheduleDraw()
       }
 
       addEventListener("resize", resize)
@@ -109,6 +111,17 @@
             }
           }
         }
+      }
+
+      function scheduleDraw() {
+        if (drawQueued) return
+
+        drawQueued = true
+
+        requestAnimationFrame(() => {
+          drawQueued = false
+          draw()
+        })
       }
 
       function addStrokePoint(stroke, rawPoint, timeStamp) {
@@ -178,7 +191,7 @@
           addStrokePoint(currentStroke, screenToWorld(sample.clientX, sample.clientY), sample.timeStamp)
         }
 
-        draw()
+        scheduleDraw()
       }
 
       canvas.addEventListener("pointerdown", (e) => {
@@ -209,7 +222,7 @@
       })
 
       canvas.addEventListener("pointermove", (e) => {
-        if (e.pointerType === "pen") {
+        if (e.pointerType === "pen" && !supportsPointerRawUpdate) {
           handlePenPointerEvent(e)
         }
 
@@ -257,7 +270,7 @@
           if (lastCenter) {
             camera = camera.translate(p.x - lastCenter.x, p.y - lastCenter.y)
 
-            draw()
+            scheduleDraw()
           }
 
           lastCenter = p
@@ -278,7 +291,7 @@
 
             camera = camera.translate(center.x, center.y).scale(scale).translate(-center.x, -center.y)
 
-            draw()
+            scheduleDraw()
           }
 
           lastCenter = center
