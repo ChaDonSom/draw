@@ -29,7 +29,7 @@
       const canvas = document.getElementById("canvas")
       const ctx = canvas.getContext("2d", {
         alpha: false,
-        desynchronized: true,
+        desynchronized: false,
         willReadFrequently: false,
       })
 
@@ -42,6 +42,7 @@
       let currentStroke = null
       let penPointer = null
       let drawQueued = false
+      let sceneDirty = true
 
       const touches = new Map()
 
@@ -51,6 +52,7 @@
         canvas.width = canvas.clientWidth * dpr
         canvas.height = canvas.clientHeight * dpr
 
+        sceneDirty = true
         scheduleDraw()
       }
 
@@ -69,13 +71,34 @@
         return p
       }
 
+      function screenToWorldWithMatrix(x, y, rect, inverseCamera) {
+        const px = x - rect.left
+        const py = y - rect.top
+
+        return new DOMPoint(px, py).matrixTransform(inverseCamera)
+      }
+
+      function drawStrokeSegments(stroke, startIndex = 1) {
+        for (let i = startIndex; i < stroke.points.length; i++) {
+          const previousPoint = stroke.points[i - 1]
+          const currentPoint = stroke.points[i]
+
+          ctx.beginPath()
+          ctx.lineWidth = getStrokeWidth(previousPoint, currentPoint)
+          ctx.moveTo(previousPoint.x, previousPoint.y)
+          ctx.lineTo(currentPoint.x, currentPoint.y)
+          ctx.stroke()
+        }
+      }
+
       function draw() {
-        ctx.setTransform(1, 0, 0, 1, 0, 0)
-
-        ctx.fillStyle = "#f5f5f5"
-        ctx.fillRect(0, 0, canvas.width, canvas.height)
-
         const dpr = devicePixelRatio
+
+        if (sceneDirty) {
+          ctx.setTransform(1, 0, 0, 1, 0, 0)
+          ctx.fillStyle = "#f5f5f5"
+          ctx.fillRect(0, 0, canvas.width, canvas.height)
+        }
 
         ctx.setTransform(camera.a * dpr, camera.b * dpr, camera.c * dpr, camera.d * dpr, camera.e * dpr, camera.f * dpr)
 
@@ -83,32 +106,27 @@
         ctx.lineJoin = "round"
         ctx.strokeStyle = "black"
 
-        for (const stroke of strokes) {
-          if (stroke.points.length < 2) continue
+        if (sceneDirty) {
+          for (const stroke of strokes) {
+            if (stroke.points.length < 2) {
+              stroke.renderedPointCount = stroke.points.length
+              continue
+            }
 
-          for (let i = 1; i < stroke.points.length; i++) {
-            const previousPoint = stroke.points[i - 1]
-            const currentPoint = stroke.points[i]
-
-            ctx.beginPath()
-            ctx.lineWidth = getStrokeWidth(previousPoint, currentPoint)
-            ctx.moveTo(previousPoint.x, previousPoint.y)
-            ctx.lineTo(currentPoint.x, currentPoint.y)
-            ctx.stroke()
+            drawStrokeSegments(stroke, 1)
+            stroke.renderedPointCount = stroke.points.length
           }
 
-          if (stroke === currentStroke && penDown) {
-            const predictedPoint = getPredictedPoint(stroke)
+          sceneDirty = false
+          return
+        }
 
-            if (predictedPoint) {
-              const lastPoint = stroke.points[stroke.points.length - 1]
+        if (currentStroke && currentStroke.points.length >= 2) {
+          const start = Math.max(1, currentStroke.renderedPointCount)
 
-              ctx.beginPath()
-              ctx.lineWidth = getStrokeWidth(lastPoint, predictedPoint)
-              ctx.moveTo(lastPoint.x, lastPoint.y)
-              ctx.lineTo(predictedPoint.x, predictedPoint.y)
-              ctx.stroke()
-            }
+          if (start < currentStroke.points.length) {
+            drawStrokeSegments(currentStroke, start)
+            currentStroke.renderedPointCount = currentStroke.points.length
           }
         }
       }
@@ -137,9 +155,20 @@
 
         const previousPoint = stroke.points[stroke.points.length - 1]
 
+        if (previousPoint) {
+          const zoom = Math.max(Math.hypot(camera.a, camera.b), 0.001)
+          const minWorldDistance = 0.45 / zoom
+          const movedDistance = Math.hypot(point.x - previousPoint.x, point.y - previousPoint.y)
+          const pressureChange = Math.abs((point.pressure ?? 0.5) - (previousPoint.pressure ?? 0.5))
+
+          if (movedDistance < minWorldDistance && pressureChange < 0.02) {
+            return false
+          }
+        }
+
         stroke.points.push(point)
 
-        if (!previousPoint) return
+        if (!previousPoint) return true
 
         const elapsed = Math.max(timeStamp - stroke.lastPointTime, 1)
         const newVelocity = {
@@ -153,6 +182,8 @@
         }
 
         stroke.lastPointTime = timeStamp
+
+        return true
       }
 
       function getStrokeWidth(previousPoint, currentPoint) {
@@ -186,12 +217,19 @@
 
         const events = typeof e.getCoalescedEvents === "function" ? e.getCoalescedEvents() : []
         const samples = events.length > 0 ? events : [e]
+        const rect = canvas.getBoundingClientRect()
+        const inverseCamera = camera.inverse()
+
+        let addedPoint = false
 
         for (const sample of samples) {
-          addStrokePoint(currentStroke, screenToWorld(sample.clientX, sample.clientY), sample.timeStamp)
+          const worldPoint = screenToWorldWithMatrix(sample.clientX, sample.clientY, rect, inverseCamera)
+          addedPoint = addStrokePoint(currentStroke, worldPoint, sample.timeStamp) || addedPoint
         }
 
-        scheduleDraw()
+        if (addedPoint) {
+          scheduleDraw()
+        }
       }
 
       canvas.addEventListener("pointerdown", (e) => {
@@ -204,6 +242,7 @@
             points: [],
             velocity: { x: 0, y: 0 },
             lastPointTime: e.timeStamp,
+            renderedPointCount: 0,
           }
 
           strokes.push(currentStroke)
@@ -270,6 +309,7 @@
           if (lastCenter) {
             camera = camera.translate(p.x - lastCenter.x, p.y - lastCenter.y)
 
+            sceneDirty = true
             scheduleDraw()
           }
 
@@ -291,6 +331,7 @@
 
             camera = camera.translate(center.x, center.y).scale(scale).translate(-center.x, -center.y)
 
+            sceneDirty = true
             scheduleDraw()
           }
 
