@@ -29,7 +29,7 @@
       const canvas = document.getElementById("canvas")
       const ctx = canvas.getContext("2d", {
         alpha: false,
-        desynchronized: false,
+        desynchronized: true,
         willReadFrequently: false,
       })
 
@@ -37,6 +37,9 @@
       const supportsPointerRawUpdate = "onpointerrawupdate" in window
 
       let camera = new DOMMatrix()
+      let canvasRect = canvas.getBoundingClientRect()
+      let inverseCamera = camera.inverse()
+      let viewportCacheDirty = true
 
       let penDown = false
       let currentStroke = null
@@ -52,28 +55,39 @@
         canvas.width = canvas.clientWidth * dpr
         canvas.height = canvas.clientHeight * dpr
 
+        viewportCacheDirty = true
         sceneDirty = true
         scheduleDraw()
+      }
+
+      function refreshViewportCache() {
+        canvasRect = canvas.getBoundingClientRect()
+        inverseCamera = camera.inverse()
+        viewportCacheDirty = false
       }
 
       addEventListener("resize", resize)
 
       function screenToWorld(x, y) {
-        const rect = canvas.getBoundingClientRect()
+        if (viewportCacheDirty) {
+          refreshViewportCache()
+        }
 
-        const px = x - rect.left
-        const py = y - rect.top
+        const px = x - canvasRect.left
+        const py = y - canvasRect.top
 
-        const inv = camera.inverse()
-
-        const p = new DOMPoint(px, py).matrixTransform(inv)
+        const p = new DOMPoint(px, py).matrixTransform(inverseCamera)
 
         return p
       }
 
-      function screenToWorldWithMatrix(x, y, rect, inverseCamera) {
-        const px = x - rect.left
-        const py = y - rect.top
+      function screenToWorldWithMatrix(x, y) {
+        if (viewportCacheDirty) {
+          refreshViewportCache()
+        }
+
+        const px = x - canvasRect.left
+        const py = y - canvasRect.top
 
         return new DOMPoint(px, py).matrixTransform(inverseCamera)
       }
@@ -157,11 +171,11 @@
 
         if (previousPoint) {
           const zoom = Math.max(Math.hypot(camera.a, camera.b), 0.001)
-          const minWorldDistance = 0.45 / zoom
+          const minWorldDistance = 0.2 / zoom
           const movedDistance = Math.hypot(point.x - previousPoint.x, point.y - previousPoint.y)
           const pressureChange = Math.abs((point.pressure ?? 0.5) - (previousPoint.pressure ?? 0.5))
 
-          if (movedDistance < minWorldDistance && pressureChange < 0.02) {
+          if (movedDistance < minWorldDistance && pressureChange < 0.015) {
             return false
           }
         }
@@ -215,15 +229,17 @@
       function handlePenPointerEvent(e) {
         if (!penDown || e.pointerId !== penPointer) return
 
+        if (viewportCacheDirty) {
+          refreshViewportCache()
+        }
+
         const events = typeof e.getCoalescedEvents === "function" ? e.getCoalescedEvents() : []
         const samples = events.length > 0 ? events : [e]
-        const rect = canvas.getBoundingClientRect()
-        const inverseCamera = camera.inverse()
 
         let addedPoint = false
 
         for (const sample of samples) {
-          const worldPoint = screenToWorldWithMatrix(sample.clientX, sample.clientY, rect, inverseCamera)
+          const worldPoint = screenToWorldWithMatrix(sample.clientX, sample.clientY)
           addedPoint = addStrokePoint(currentStroke, worldPoint, sample.timeStamp) || addedPoint
         }
 
@@ -259,7 +275,6 @@
           })
         }
       })
-
       canvas.addEventListener("pointermove", (e) => {
         if (e.pointerType === "pen" && !supportsPointerRawUpdate) {
           handlePenPointerEvent(e)
@@ -308,6 +323,7 @@
 
           if (lastCenter) {
             camera = camera.translate(p.x - lastCenter.x, p.y - lastCenter.y)
+            viewportCacheDirty = true
 
             sceneDirty = true
             scheduleDraw()
@@ -330,6 +346,7 @@
             const scale = dist / lastDistance
 
             camera = camera.translate(center.x, center.y).scale(scale).translate(-center.x, -center.y)
+            viewportCacheDirty = true
 
             sceneDirty = true
             scheduleDraw()
