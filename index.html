@@ -170,16 +170,16 @@
         const previousPoint = stroke.points[stroke.points.length - 1]
 
         if (previousPoint) {
-          const zoom = Math.max(Math.hypot(camera.a, camera.b), 0.001)
-          const minWorldDistance = 0.2 / zoom
           const movedDistance = Math.hypot(point.x - previousPoint.x, point.y - previousPoint.y)
-          const pressureChange = Math.abs((point.pressure ?? 0.5) - (previousPoint.pressure ?? 0.5))
+          const elapsed = Math.max(timeStamp - stroke.lastPointTime, 1)
 
-          if (movedDistance < minWorldDistance && pressureChange < 0.015) {
-            return false
-          }
+          stroke.totalPointDistance = (stroke.totalPointDistance ?? 0) + movedDistance
+          stroke.maxPointDistance = Math.max(stroke.maxPointDistance ?? 0, movedDistance)
+          stroke.totalPointTime = (stroke.totalPointTime ?? 0) + elapsed
+          stroke.maxPointTime = Math.max(stroke.maxPointTime ?? 0, elapsed)
         }
 
+        stroke.acceptedPointCount = (stroke.acceptedPointCount ?? 0) + 1
         stroke.points.push(point)
 
         if (!previousPoint) return true
@@ -259,6 +259,12 @@
             velocity: { x: 0, y: 0 },
             lastPointTime: e.timeStamp,
             renderedPointCount: 0,
+            acceptedPointCount: 0,
+            droppedPointCount: 0,
+            totalPointDistance: 0,
+            maxPointDistance: 0,
+            totalPointTime: 0,
+            maxPointTime: 0,
           }
 
           strokes.push(currentStroke)
@@ -302,6 +308,22 @@
         if (e.pointerType === "pen") {
           penDown = false
           penPointer = null
+
+          if (currentStroke) {
+            const accepted = currentStroke.acceptedPointCount ?? 0
+            const dropped = currentStroke.droppedPointCount ?? 0
+            const total = accepted + dropped
+
+            console.log("stroke samples", {
+              accepted,
+              dropped,
+              total,
+              averagePointDistance: accepted > 1 ? (currentStroke.totalPointDistance ?? 0) / (accepted - 1) : 0,
+              maxPointDistance: currentStroke.maxPointDistance ?? 0,
+              averagePointTime: accepted > 1 ? (currentStroke.totalPointTime ?? 0) / (accepted - 1) : 0,
+              maxPointTime: currentStroke.maxPointTime ?? 0,
+            })
+          }
         }
 
         touches.delete(e.pointerId)
